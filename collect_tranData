@@ -1,0 +1,148 @@
+INFURA_URL = "https://mainnet.infura.io/v3/bbcfbb0f72fc4a5292cd80aae6016e84"
+w3 = Web3(Web3.HTTPProvider(INFURA_URL))
+
+block_size = 2500  # 掃描的區塊數量
+data_size = 5000   # 總共要收集的地址數量
+target_per_category = data_size // 4  # 每個類別的目標數量
+
+# EIP-165 介面 ID
+ERC721_INTERFACE_ID = "0x80ac58cd"
+ERC1155_INTERFACE_ID = "0xd9b67a26"
+
+# 初始化分類
+eoa_wallets = set()
+token_contracts = set()
+nft_contracts = set()
+other_contracts = set()
+
+def get_code(address):
+    """取得合約 bytecode"""
+    return w3.eth.get_code(address).hex()
+
+def is_eoa(address):
+    """檢查是否為 EOA（外部錢包）"""
+    return get_code(address) == "0x"
+
+def supports_interface(address, interface_id):
+    """檢查合約是否支援 ERC-165 介面（ERC-721, ERC-1155）"""
+    try:
+        contract = w3.eth.contract(address=address, abi=[{
+            "constant": True,
+            "inputs": [{"name": "interfaceID", "type": "bytes4"}],
+            "name": "supportsInterface",
+            "outputs": [{"name": "", "type": "bool"}],
+            "payable": False,
+            "stateMutability": "view",
+            "type": "function"
+        }])
+        return contract.functions.supportsInterface(interface_id).call()
+    except:
+        return False
+
+def is_erc20(address):
+    """檢查是否為 ERC-20 代幣"""
+    try:
+        contract = w3.eth.contract(address=address, abi=[
+            {"constant": True, "inputs": [], "name": "totalSupply", "outputs": [{"name": "", "type": "uint256"}], "stateMutability": "view", "type": "function"},
+            {"constant": True, "inputs": [], "name": "symbol", "outputs": [{"name": "", "type": "string"}], "stateMutability": "view", "type": "function"},
+            {"constant": True, "inputs": [], "name": "decimals", "outputs": [{"name": "", "type": "uint8"}], "stateMutability": "view", "type": "function"}
+        ])
+        return contract.functions.totalSupply().call() is not None
+    except:
+        return False
+
+def print_progress():
+    """即時顯示收集進度"""
+    print(f"🔄 目前進度: EOA: {len(eoa_wallets)}/{target_per_category}, Token: {len(token_contracts)}/{target_per_category}, NFT: {len(nft_contracts)}/{target_per_category}, Other: {len(other_contracts)}/{target_per_category}")
+
+def classify_address(address):
+    """依照優先順序分類地址"""
+    if address in eoa_wallets or address in token_contracts or address in nft_contracts or address in other_contracts:
+        return  # 已分類過，跳過
+
+    # **Step 1: 先分類 EOA**
+    if len(eoa_wallets) < target_per_category:
+        if is_eoa(address):
+            eoa_wallets.add(address)
+            print(f"✅ EOA: {address}")
+            print_progress()
+            return  # EOA 分類完畢，不再進一步分類
+
+    # **Step 2: EOA 達標後，分類 Token**
+    if len(token_contracts) < target_per_category:
+        if is_erc20(address):
+            token_contracts.add(address)
+            print(f"💰 Token: {address}")
+            print_progress()
+            return  # Token 分類完畢，不再進一步分類
+
+    # **Step 3: Token 達標後，分類 NFT**
+    if len(nft_contracts) < target_per_category:
+        if supports_interface(address, ERC721_INTERFACE_ID) or supports_interface(address, ERC1155_INTERFACE_ID):
+            nft_contracts.add(address)
+            print(f"🎨 NFT: {address}")
+            print_progress()
+            return  # NFT 分類完畢，不再進一步分類
+
+    # **Step 4: 其他智能合約**
+    if len(other_contracts) < target_per_category:
+        other_contracts.add(address)
+        print(f"🔧 Other Contract: {address}")
+        print_progress()
+
+def get_block_transactions(block_number):
+    """取得區塊中的交易地址，並分類"""
+    block = w3.eth.get_block(block_number, full_transactions=True)
+    addresses = set()
+
+    for tx in block.transactions:
+        try:
+            # 轉換發送者地址為 checksum 格式
+            sender = Web3.to_checksum_address(tx["from"])
+            addresses.add(sender)
+
+            # 轉換接收者地址（如果存在）
+            if tx.to:
+                receiver = Web3.to_checksum_address(tx.to)
+                addresses.add(receiver)
+        except Exception as e:
+            print(f"Address conversion error: {e}")
+            continue  # 忽略錯誤，繼續處理下一筆交易
+
+    for addr in addresses:
+        classify_address(addr)  # 依序分類地址
+
+
+    for addr in addresses:
+        classify_address(addr)  # 依序分類地址
+
+latest_block = w3.eth.block_number
+
+for i in range(block_size):
+    block_num = latest_block - i
+    print(f'\n📌 Scanning block {block_num}...')
+    get_block_transactions(block_num)
+
+    # 檢查是否所有類別都達標
+    if (len(eoa_wallets) >= target_per_category and
+        len(token_contracts) >= target_per_category and
+        len(nft_contracts) >= target_per_category and
+        len(other_contracts) >= target_per_category):
+        print(f"\n✅ 所有類別達標，提前停止！")
+        break
+
+    time.sleep(0.1)
+
+# 儲存結果
+def save_addresses(filename, addresses):
+    with open(filename, "w") as file:
+        for addr in addresses:
+            file.write(addr + "\n")
+    print(f"📂 已儲存 {len(addresses)} 個地址到 {filename}")
+
+save_addresses("eoa_wallets.txt", eoa_wallets)
+save_addresses("token_contracts.txt", token_contracts)
+save_addresses("nft_contracts.txt", nft_contracts)
+save_addresses("other_contracts.txt", other_contracts)
+
+print("\n🎯 地址分類完成！")
