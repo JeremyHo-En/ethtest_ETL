@@ -1,4 +1,4 @@
-INFURA_URL = "https://mainnet.infura.io/v3/bbcfbb0f72fc4a5292cd80aae6016e84"
+INFURA_URL = "https://mainnet.infura.io/v3/"
 w3 = Web3(Web3.HTTPProvider(INFURA_URL))
 
 block_size = 2500  # 掃描的區塊數量
